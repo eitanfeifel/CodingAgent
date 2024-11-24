@@ -39,16 +39,6 @@ export const reviewDiff = async (messages: ChatCompletionMessageParam[]) => {
   return message.content;
 };
 
-// export const reviewFiles = async (
-//   files: PRFile[],
-//   patchBuilder: (file: PRFile) => string,
-//   convoBuilder: (diff: string) => ChatCompletionMessageParam[]
-// ) => {
-//   const patches = files.map((file) => patchBuilder(file));
-//   const messages = convoBuilder(patches.join("\n"));
-//   const feedback = await reviewDiff(messages);
-//   return feedback;
-// };
 export const reviewFiles = async (
   files: PRFile[],
   patchBuilder: (file: PRFile) => string,
@@ -110,7 +100,7 @@ const filterFile = (file: PRFile) => {
 };
 
 
-// Define agent-specific review functions
+// Agent-specific review functions -- Can change to preference!
 export const syntaxAgentReview = async (patch: string): Promise<string> => {
   const prompt = `${SYNTAX_PROMPT}\n${patch}`;
   const response = await generateChatCompletion({
@@ -118,7 +108,6 @@ export const syntaxAgentReview = async (patch: string): Promise<string> => {
   });
   return response.content;
 };
-
 
 export const readabilityAgentReview = async (patch: string): Promise<string> => {
   const prompt = `${READABILITY_REVIEW_PROMPT}\n${patch}`;
@@ -136,8 +125,7 @@ export const dependencyAgentReview = async (patch: string): Promise<string> => {
   return response.content;
 };
 
-
-// Aggregate multi-agent reviews
+// Aggregate agent reviews
 export const aggregateReviews = async (patch: string): Promise<string> => {
   const [syntaxReview, securityReview, functionalityReview] = await Promise.all([
     syntaxAgentReview(patch),
@@ -145,7 +133,7 @@ export const aggregateReviews = async (patch: string): Promise<string> => {
     dependencyAgentReview(patch),
   ]);
 
-  // Log the results for better debugging
+  // Log the results for debugging
   console.log("Syntax Review:", syntaxReview);
   console.log("Security Review:", securityReview);
   console.log("Functionality Review:", functionalityReview);
@@ -153,10 +141,10 @@ export const aggregateReviews = async (patch: string): Promise<string> => {
   return `Syntax Review:\n${syntaxReview}\n\nSecurity Review:\n${securityReview}\n\nFunctionality Review:\n${functionalityReview}`;
 };
 
-
+//Embed chunks of the codebase to be retrieved as context
 async function chunkAndEmbedFile(file: PRFile, index: any) {
   const chunks = file.patch.split("\n").reduce((acc, line, idx) => {
-    const chunkIndex = Math.floor(idx / 10); // Split into chunks of 10 lines
+    const chunkIndex = Math.floor(idx / 10); 
     acc[chunkIndex] = (acc[chunkIndex] || "") + line + "\n";
     return acc;
   }, []);
@@ -177,6 +165,7 @@ async function chunkAndEmbedFile(file: PRFile, index: any) {
   return chunkEmbeddings;
 }
 
+//Retrieval for relevant chunks
 async function retrieveContextForFile(file: PRFile) {
   const index = await initializePinecone();
   const embedding = await generateEmbedding(file.patch);
@@ -185,9 +174,7 @@ async function retrieveContextForFile(file: PRFile) {
   console.log(`Matched chunk: ${match.metadata.chunk}`);
 });
 
-
-
-  // Extract the top K relevant chunks
+  // Retrive the top K relevant chunks
   const relevantChunks = matches.map((match) => match.metadata.chunk).join("\n");
   return relevantChunks;
 }
@@ -311,39 +298,7 @@ const processOutsideLimitFiles = (
   return processGroups;
 };
 
-// const processXMLSuggestions = async (feedbacks: string[]) => {
-//   const xmlParser = new xml2js.Parser();
-//   const parsedSuggestions = await Promise.all(
-//     feedbacks.map((fb) => {
-//       fb = fb
-//         .split("<code>")
-//         .join("<code><![CDATA[")
-//         .split("</code>")
-//         .join("]]></code>");
-//       console.log(fb);
-//       return xmlParser.parseStringPromise(fb);
-//     })
-//   );
-//   // gets suggestion arrays [[suggestion], [suggestion]], then flattens
-//   const allSuggestions = parsedSuggestions
-//     .map((sug) => sug.review.suggestion)
-//     .flat(1);
-//   const suggestions: PRSuggestion[] = allSuggestions.map((rawSuggestion) => {
-//     const lines = rawSuggestion.code[0].trim().split("\n");
-//     lines[0] = lines[0].trim();
-//     lines[lines.length - 1] = lines[lines.length - 1].trim();
-//     const code = lines.join("\n");
-
-//     return new PRSuggestionImpl(
-//       rawSuggestion.describe[0],
-//       rawSuggestion.type[0],
-//       rawSuggestion.comment[0],
-//       code,
-//       rawSuggestion.filename[0]
-//     );
-//   });
-//   return suggestions;
-// };
+//Updated to handle new method of retrieval
 const processXMLSuggestions = async (feedbacks: string[]) => {
   const xmlParser = new xml2js.Parser();
   try {
