@@ -20,9 +20,6 @@ import {
   getTokenLength,
   getXMLReviewPrompt,
   isConversationWithinLimit,
-  SYNTAX_PROMPT,
-  READABILITY_REVIEW_PROMPT,
-  DEPENDENCY_REVIEW_PROMPT
 } from "./prompts";
 import {
   INLINE_FIX_FUNCTION,
@@ -39,32 +36,17 @@ export const reviewDiff = async (messages: ChatCompletionMessageParam[]) => {
   return message.content;
 };
 
-// export const reviewFiles = async (
-//   files: PRFile[],
-//   patchBuilder: (file: PRFile) => string,
-//   convoBuilder: (diff: string) => ChatCompletionMessageParam[]
-// ) => {
-//   const patches = files.map((file) => patchBuilder(file));
-//   const messages = convoBuilder(patches.join("\n"));
-//   const feedback = await reviewDiff(messages);
-//   return feedback;
-// };
 export const reviewFiles = async (
   files: PRFile[],
   patchBuilder: (file: PRFile) => string,
   convoBuilder: (diff: string) => ChatCompletionMessageParam[]
 ) => {
   const patches = files.map((file) => patchBuilder(file));
-  const aggregatedFeedbacks = await Promise.all(
-      patches.map((patch) => aggregateReviews(patch))
-  );
-
-  // Combine all feedbacks into one
-  const combinedFeedback = aggregatedFeedbacks.join("\n---\n");
-  const messages = convoBuilder(combinedFeedback);
-  const finalFeedback = await reviewDiff(messages);
-  return finalFeedback;
+  const messages = convoBuilder(patches.join("\n"));
+  const feedback = await reviewDiff(messages);
+  return feedback;
 };
+import { syntaxReviewAgent, styleReviewAgent, dependencyReviewAgent } from "./agents";
 
 
 const filterFile = (file: PRFile) => {
@@ -108,51 +90,6 @@ const filterFile = (file: PRFile) => {
   }
   return true;
 };
-
-
-// Define agent-specific review functions
-export const syntaxAgentReview = async (patch: string): Promise<string> => {
-  const prompt = `${SYNTAX_PROMPT}\n${patch}`;
-  const response = await generateChatCompletion({
-    messages: [{ role: "user", content: prompt }],
-  });
-  return response.content;
-};
-
-
-export const readabilityAgentReview = async (patch: string): Promise<string> => {
-  const prompt = `${READABILITY_REVIEW_PROMPT}\n${patch}`;
-  const response = await generateChatCompletion({
-    messages: [{ role: "user", content: prompt }],
-  });
-  return response.content;
-};
-
-export const dependencyAgentReview = async (patch: string): Promise<string> => {
-  const prompt = `${DEPENDENCY_REVIEW_PROMPT}\n${patch}`;
-  const response = await generateChatCompletion({
-    messages: [{ role: "user", content: prompt }],
-  });
-  return response.content;
-};
-
-
-// Aggregate multi-agent reviews
-export const aggregateReviews = async (patch: string): Promise<string> => {
-  const [syntaxReview, securityReview, functionalityReview] = await Promise.all([
-    syntaxAgentReview(patch),
-    readabilityAgentReview(patch),
-    dependencyAgentReview(patch),
-  ]);
-
-  // Log the results for better debugging
-  console.log("Syntax Review:", syntaxReview);
-  console.log("Security Review:", securityReview);
-  console.log("Functionality Review:", functionalityReview);
-
-  return `Syntax Review:\n${syntaxReview}\n\nSecurity Review:\n${securityReview}\n\nFunctionality Review:\n${functionalityReview}`;
-};
-
 
 async function chunkAndEmbedFile(file: PRFile, index: any) {
   const chunks = file.patch.split("\n").reduce((acc, line, idx) => {
@@ -311,64 +248,39 @@ const processOutsideLimitFiles = (
   return processGroups;
 };
 
-// const processXMLSuggestions = async (feedbacks: string[]) => {
-//   const xmlParser = new xml2js.Parser();
-//   const parsedSuggestions = await Promise.all(
-//     feedbacks.map((fb) => {
-//       fb = fb
-//         .split("<code>")
-//         .join("<code><![CDATA[")
-//         .split("</code>")
-//         .join("]]></code>");
-//       console.log(fb);
-//       return xmlParser.parseStringPromise(fb);
-//     })
-//   );
-//   // gets suggestion arrays [[suggestion], [suggestion]], then flattens
-//   const allSuggestions = parsedSuggestions
-//     .map((sug) => sug.review.suggestion)
-//     .flat(1);
-//   const suggestions: PRSuggestion[] = allSuggestions.map((rawSuggestion) => {
-//     const lines = rawSuggestion.code[0].trim().split("\n");
-//     lines[0] = lines[0].trim();
-//     lines[lines.length - 1] = lines[lines.length - 1].trim();
-//     const code = lines.join("\n");
-
-//     return new PRSuggestionImpl(
-//       rawSuggestion.describe[0],
-//       rawSuggestion.type[0],
-//       rawSuggestion.comment[0],
-//       code,
-//       rawSuggestion.filename[0]
-//     );
-//   });
-//   return suggestions;
-// };
 const processXMLSuggestions = async (feedbacks: string[]) => {
   const xmlParser = new xml2js.Parser();
-  try {
-    const parsedSuggestions = await Promise.all(
-      feedbacks.map(async (fb) => {
-        fb = fb.replace(/<code>/g, "<code><![CDATA[").replace(/<\/code>/g, "]]></code>");
-        return await xmlParser.parseStringPromise(fb);
-      })
-    );
-    return parsedSuggestions
-      .map((sug) => sug.review.suggestion)
-      .flat()
-      .map((rawSuggestion) => new PRSuggestionImpl(
-        rawSuggestion.describe[0],
-        rawSuggestion.type[0],
-        rawSuggestion.comment[0],
-        rawSuggestion.code[0],
-        rawSuggestion.filename[0]
-      ));
-  } catch (error) {
-    console.error("Error parsing XML suggestions:", error);
-    throw error;
-  }
-};
+  const parsedSuggestions = await Promise.all(
+    feedbacks.map((fb) => {
+      fb = fb
+        .split("<code>")
+        .join("<code><![CDATA[")
+        .split("</code>")
+        .join("]]></code>");
+      console.log(fb);
+      return xmlParser.parseStringPromise(fb);
+    })
+  );
+  // gets suggestion arrays [[suggestion], [suggestion]], then flattens
+  const allSuggestions = parsedSuggestions
+    .map((sug) => sug.review.suggestion)
+    .flat(1);
+  const suggestions: PRSuggestion[] = allSuggestions.map((rawSuggestion) => {
+    const lines = rawSuggestion.code[0].trim().split("\n");
+    lines[0] = lines[0].trim();
+    lines[lines.length - 1] = lines[lines.length - 1].trim();
+    const code = lines.join("\n");
 
+    return new PRSuggestionImpl(
+      rawSuggestion.describe[0],
+      rawSuggestion.type[0],
+      rawSuggestion.comment[0],
+      code,
+      rawSuggestion.filename[0]
+    );
+  });
+  return suggestions;
+};
 
 const generateGithubIssueUrl = (
   owner: string,
@@ -434,22 +346,43 @@ const convertPRSuggestionToComment = (
   }
   return comments;
 };
-
 const xmlResponseBuilder = async (
-  owner: string,
-  repoName: string,
-  feedbacks: string[]
-): Promise<BuilderResponse> => {
-  console.log("IN XML RESPONSE BUILDER");
-  const parsedXMLSuggestions = await processXMLSuggestions(feedbacks);
-  const comments = convertPRSuggestionToComment(
-    owner,
-    repoName,
-    dedupSuggestions(parsedXMLSuggestions)
-  );
-  const commentBlob = comments.join("\n");
-  return { comment: commentBlob, structuredComments: parsedXMLSuggestions };
-};
+    owner: string,
+    repoName: string,
+    feedbacks: (string | Record<string, string>)[]
+  ): Promise<BuilderResponse> => {
+    console.log("IN XML RESPONSE BUILDER");
+  
+    const parsedXMLSuggestions = await processXMLSuggestions(
+      feedbacks.map((feedback) => (typeof feedback === "string" ? feedback : feedback.syntax))
+    );
+  
+    const comments = convertPRSuggestionToComment(
+      owner,
+      repoName,
+      dedupSuggestions(parsedXMLSuggestions)
+    );
+  
+    const commentBlob = comments.join("\n");
+  
+    return { comment: commentBlob, structuredComments: parsedXMLSuggestions };
+  };
+  
+// const xmlResponseBuilder = async (
+//   owner: string,
+//   repoName: string,
+//   feedbacks: string[]
+// ): Promise<BuilderResponse> => {
+//   console.log("IN XML RESPONSE BUILDER");
+//   const parsedXMLSuggestions = await processXMLSuggestions(feedbacks);
+//   const comments = convertPRSuggestionToComment(
+//     owner,
+//     repoName,
+//     dedupSuggestions(parsedXMLSuggestions)
+//   );
+//   const commentBlob = comments.join("\n");
+//   return { comment: commentBlob, structuredComments: parsedXMLSuggestions };
+// };
 
 const curriedXmlResponseBuilder = (owner: string, repoName: string) => {
   return (feedbacks: string[]) =>
@@ -638,70 +571,61 @@ const reviewChangesRetry = async (files: PRFile[], builders: Builders[]) => {
 };
 
 export const processPullRequest = async (
-  octokit: Octokit,
-  payload: WebhookEventMap["pull_request"],
-  files: PRFile[],
-  includeSuggestions = false
-) => {
-  console.dir({ files }, { depth: null });
-  const filteredFiles = files.filter((file) => filterFile(file));
-  console.dir({ filteredFiles }, { depth: null });
-  if (filteredFiles.length == 0) {
-    console.log("Nothing to comment on, all files were filtered out. The PR Agent does not support the following file types: pdf, png, jpg, jpeg, gif, mp4, mp3, md, json, env, toml, svg, package-lock.json, yarn.lock, .gitignore, package.json, tsconfig.json, poetry.lock, readme.md");
-    return {
-      review: null,
-      suggestions: [],
-    };
-  }
-  await Promise.all(
-    filteredFiles.map(async (file) => {
-      const index = await initializePinecone(); // Initialize Pinecone
-      await chunkAndEmbedFile(file, index); // Chunk and embed the file
-      const context = await retrieveContextForFile(file); // Retrieve context
-      file.context = context; // Attach context to the file object
-      await preprocessFile(octokit, payload, file); // Preprocess file
-    })
-  );  
-  const owner = payload.repository.owner.login;
-  const repoName = payload.repository.name;
-  const curriedXMLResponseBuilder = curriedXmlResponseBuilder(owner, repoName);
-  if (includeSuggestions) {
-    const reviewComments = await reviewChangesRetry(filteredFiles, [
-      {
-        convoBuilder: getXMLReviewPrompt,
-        responseBuilder: curriedXMLResponseBuilder,
-      },
-      {
-        convoBuilder: getReviewPrompt,
-        responseBuilder: basicResponseBuilder,
-      },
-    ]);
-    let inlineComments: CodeSuggestion[] = [];
-    if (reviewComments.structuredComments.length > 0) {
-      console.log("STARTING INLINE COMMENT PROCESSING");
-      inlineComments = await Promise.all(
-        reviewComments.structuredComments.map((suggestion) => {
-          // find relevant file
-          const file = files.find(
-            (file) => file.filename === suggestion.filename
-          );
-          if (file == null) {
-            return null;
-          }
-          return generateInlineComments(suggestion, file);
-        })
+    octokit: Octokit,
+    payload: WebhookEventMap["pull_request"],
+    files: PRFile[],
+    includeSuggestions = false
+  ) => {
+    console.dir({ files }, { depth: null });
+  
+    const filteredFiles = files.filter((file) => filterFile(file));
+    console.dir({ filteredFiles }, { depth: null });
+  
+    if (filteredFiles.length === 0) {
+      console.log(
+        "Nothing to comment on, all files were filtered out. The PR Agent does not support the following file types: pdf, png, jpg, jpeg, gif, mp4, mp3, md, json, env, toml, svg, package-lock.json, yarn.lock, .gitignore, package.json, tsconfig.json, poetry.lock, readme.md"
       );
+      return {
+        review: null,
+        suggestions: [],
+      };
     }
-    const filteredInlineComments = inlineComments.filter(
-      (comment) => comment !== null
+  
+    // Step 1: Retrieve context for files
+    await Promise.all(
+      filteredFiles.map(async (file) => {
+        const index = await initializePinecone(); // Initialize Pinecone
+        await chunkAndEmbedFile(file, index); // Chunk and embed the file
+        const context = await retrieveContextForFile(file); // Retrieve context
+        file.context = context; // Attach context to the file object
+        await preprocessFile(octokit, payload, file); // Preprocess file
+      })
     );
-    return {
-      review: reviewComments,
-      suggestions: filteredInlineComments,
-    };
-  } else {
-    const [review] = await Promise.all([
-      reviewChangesRetry(filteredFiles, [
+  
+    // Step 2: Use the agents to generate reviews
+    const agentReviews = await Promise.all(
+      filteredFiles.map(async (file) => {
+        const syntaxReview = await syntaxReviewAgent(file.patch, file.context);
+        const styleReview = await styleReviewAgent(file.patch, file.context);
+        const dependencyReview = await dependencyReviewAgent(file.patch, file.context);
+  
+        return {
+          filename: file.filename,
+          syntax: syntaxReview,
+          style: styleReview,
+          dependencies: dependencyReview,
+        };
+      })
+    );
+  
+    // Step 3: Add agent reviews to original process
+    const owner = payload.repository.owner.login;
+    const repoName = payload.repository.name;
+    const curriedXMLResponseBuilder = curriedXmlResponseBuilder(owner, repoName);
+  
+    if (includeSuggestions) {
+      // Use original review logic
+      const reviewComments = await reviewChangesRetry(filteredFiles, [
         {
           convoBuilder: getXMLReviewPrompt,
           responseBuilder: curriedXMLResponseBuilder,
@@ -710,12 +634,144 @@ export const processPullRequest = async (
           convoBuilder: getReviewPrompt,
           responseBuilder: basicResponseBuilder,
         },
-      ]),
-    ]);
+      ]);
+  
+      // Combine original review and agent reviews
+      const combinedReviews = {
+        ...reviewComments,
+        agentReviews,
+      };
+  
+      // Step 4: Generate structured inline comments for suggestions
+      let inlineComments: CodeSuggestion[] = [];
+      if (reviewComments.structuredComments.length > 0) {
+        console.log("STARTING INLINE COMMENT PROCESSING");
+        inlineComments = await Promise.all(
+          reviewComments.structuredComments.map((suggestion) => {
+            const file = files.find((file) => file.filename === suggestion.filename);
+            if (file == null) {
+              return null;
+            }
+            return generateInlineComments(suggestion, file);
+          })
+        );
+      }
+  
+      const filteredInlineComments = inlineComments.filter(
+        (comment) => comment !== null
+      );
+  
+      return {
+        review: combinedReviews,
+        suggestions: filteredInlineComments,
+      };
+    } else {
+      // If no suggestions are included, only compile the agent reviews
+      const [review] = await Promise.all([
+        reviewChangesRetry(filteredFiles, [
+          {
+            convoBuilder: getXMLReviewPrompt,
+            responseBuilder: curriedXMLResponseBuilder,
+          },
+          {
+            convoBuilder: getReviewPrompt,
+            responseBuilder: basicResponseBuilder,
+          },
+        ]),
+      ]);
+  
+      // Combine agent reviews into the final XML
+      const xmlResponse = await curriedXMLResponseBuilder([
+        ...review.structuredComments,
+        ...agentReviews,
+      ]);
+  
+      return {
+        review: xmlResponse,
+        suggestions: [],
+      };
+    }
+  };
+  
+// export const processPullRequest = async (
+//   octokit: Octokit,
+//   payload: WebhookEventMap["pull_request"],
+//   files: PRFile[],
+//   includeSuggestions = false
+// ) => {
+//   console.dir({ files }, { depth: null });
+//   const filteredFiles = files.filter((file) => filterFile(file));
+//   console.dir({ filteredFiles }, { depth: null });
+//   if (filteredFiles.length == 0) {
+//     console.log("Nothing to comment on, all files were filtered out. The PR Agent does not support the following file types: pdf, png, jpg, jpeg, gif, mp4, mp3, md, json, env, toml, svg, package-lock.json, yarn.lock, .gitignore, package.json, tsconfig.json, poetry.lock, readme.md");
+//     return {
+//       review: null,
+//       suggestions: [],
+//     };
+//   }
+//   await Promise.all(
+//     filteredFiles.map(async (file) => {
+//       const index = await initializePinecone(); // Initialize Pinecone
+//       await chunkAndEmbedFile(file, index); // Chunk and embed the file
+//       const context = await retrieveContextForFile(file); // Retrieve context
+//       file.context = context; // Attach context to the file object
+//       await preprocessFile(octokit, payload, file); // Preprocess file
+//     })
+//   );  
+//   const owner = payload.repository.owner.login;
+//   const repoName = payload.repository.name;
+//   const curriedXMLResponseBuilder = curriedXmlResponseBuilder(owner, repoName);
+//   if (includeSuggestions) {
+//     const reviewComments = await reviewChangesRetry(filteredFiles, [
+//       {
+//         convoBuilder: getXMLReviewPrompt,
+//         responseBuilder: curriedXMLResponseBuilder,
+//       },
+//       {
+//         convoBuilder: getReviewPrompt,
+//         responseBuilder: basicResponseBuilder,
+//       },
+//     ]);
+//     let inlineComments: CodeSuggestion[] = [];
+//     if (reviewComments.structuredComments.length > 0) {
+//       console.log("STARTING INLINE COMMENT PROCESSING");
+//       inlineComments = await Promise.all(
+//         reviewComments.structuredComments.map((suggestion) => {
+//           // find relevant file
+//           const file = files.find(
+//             (file) => file.filename === suggestion.filename
+//           );
+//           if (file == null) {
+//             return null;
+//           }
+//           return generateInlineComments(suggestion, file);
+//         })
+//       );
+//     }
+//     const filteredInlineComments = inlineComments.filter(
+//       (comment) => comment !== null
+//     );
+//     return {
+//       review: reviewComments,
+//       suggestions: filteredInlineComments,
+//     };
+//   } else {
+//     const [review] = await Promise.all([
+//       reviewChangesRetry(filteredFiles, [
+//         {
+//           convoBuilder: getXMLReviewPrompt,
+//           responseBuilder: curriedXMLResponseBuilder,
+//         },
+//         {
+//           convoBuilder: getReviewPrompt,
+//           responseBuilder: basicResponseBuilder,
+//         },
+//       ]),
+//     ]);
 
-    return {
-      review,
-      suggestions: [],
-    };
-  }
-};
+//     return {
+//       review,
+//       suggestions: [],
+//     };
+//   }
+// };

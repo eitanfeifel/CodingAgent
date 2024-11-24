@@ -4,6 +4,7 @@
   "main": "src/app.ts",
   "license": "ISC",
   "scripts": {
+    "build": "tsc",
     "start": "tsx src/app.ts"
   },
   "dependencies": {
@@ -11,13 +12,16 @@
     "@babel/traverse": "^7.23.2",
     "@octokit/rest": "^20.0.2",
     "@octokit/webhooks-definitions": "^3.67.3",
+    "@pinecone-database/pinecone": "^4.0.0",
     "@types/node": "^20.8.3",
     "chalk": "^5.3.0",
     "diff": "^5.1.0",
-    "dotenv": "^16.3.1",
+    "dotenv": "^16.4.5",
     "gpt-tokenizer": "^2.1.2",
     "groq-sdk": "^0.8.0",
+    "langchain": "^0.3.6",
     "octokit": "^3.1.1",
+    "openai": "^4.73.0",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
@@ -27,6 +31,6 @@
     "csv-writer": "^1.6.0",
     "smee-client": "^1.2.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.2.2"
+    "typescript": "^5.6.3"
   }
 }

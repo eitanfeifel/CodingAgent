@@ -120,13 +120,22 @@ export const getGitFile = async (
         },
       }
     );
-    //@ts-ignore
-    const decodedContent = Buffer.from(
-      response.data.content,
-      "base64"
-    ).toString("utf8");
-    //@ts-ignore
-    return { content: decodedContent, sha: response.data.sha };
+
+    // Ensure response.data is a file and has content
+    if (
+      typeof response.data === "object" &&
+      "content" in response.data &&
+      typeof response.data.content === "string"
+    ) {
+      const decodedContent = Buffer.from(
+        response.data.content,
+        "base64"
+      ).toString("utf8");
+      return { content: decodedContent, sha: response.data.sha };
+    }
+
+    // Handle cases where the content is missing or not a file
+    throw new Error("The requested path is not a file or does not contain content.");
   } catch (exc) {
     if (exc.status === 404) {
       return { content: null, sha: null };
@@ -135,6 +144,7 @@ export const getGitFile = async (
     throw exc;
   }
 };
+
 
 export const getFileContents = async (
   octokit: Octokit,

@@ -24,6 +24,7 @@ export interface PRFile {
   patchTokenLength?: number;
   old_contents?: string;
   current_contents?: string;
+  context?: string; // New field for storing retrieved context
 }
 
 export interface BuilderResponse {
